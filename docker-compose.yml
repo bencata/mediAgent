@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:16
+    container_name: mediagent-db
+    environment:
+      # Local development credentials only - never reuse these anywhere real.
+      POSTGRES_USER: mediagent
+      POSTGRES_PASSWORD: mediagent
+      POSTGRES_DB: mediagent
+    ports:
+      - "5432:5432"            # host:container -> reachable at localhost:5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # data survives container restarts
+    healthcheck:
+      # Compose marks the container "healthy" once Postgres accepts connections.
+      test: ["CMD-SHELL", "pg_isready -U mediagent -d mediagent"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
