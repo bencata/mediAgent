@@ -24,11 +24,10 @@ from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from app.db import models as m  # noqa: E402
-from app.db.seed import seed  # noqa: E402
+from app.db.seed import reset, seed  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
+from app.repositories import SqlRepository  # noqa: E402
 from app.services import AppointmentService  # noqa: E402
-from app.sql_repository import SqlRepository  # noqa: E402
 from tests.helpers import NOW  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -60,10 +59,9 @@ def _database():
 @pytest.fixture
 def fresh_db(_database):
     """Before EACH test: empty every table, then load the demo seed."""
-    tables = ", ".join(t.name for t in m.Base.metadata.sorted_tables)
     with SessionLocal.begin() as setup:  # commits when the block ends
-        setup.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
-        seed(setup)
+        reset(setup)
+        seed(setup, today=NOW.date())  # fixed day: the data never changes
 
 
 @pytest.fixture

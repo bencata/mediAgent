@@ -9,8 +9,8 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session
+from app.repositories import SqlRepository
 from app.services import AppointmentService
-from app.sql_repository import SqlRepository
 
 
 def get_repository(

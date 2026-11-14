@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, engine, get_session
 from app.dependencies import get_service
 from app.main import app
+from app.repositories import SqlRepository
 from app.services import AppointmentService
-from app.sql_repository import SqlRepository
 from tests.helpers import (
     BEN,
     CARDIO_SLOT_DAY1,

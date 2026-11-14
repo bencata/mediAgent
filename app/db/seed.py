@@ -1,16 +1,23 @@
-"""Seed the database with demo data:  uv run python -m app.db.seed
+"""Seed the database with demo data.
 
-Idempotent: if the data is already there it does nothing, so it is safe to
-run again. Dates are fixed (no "now") so the demo is the same every time.
+    uv run python -m app.db.seed            # seed if empty (safe to repeat)
+    uv run python -m app.db.seed --reset    # DELETE ALL DATA, then seed (dev only)
+
+Every date is relative to a "today" (default: the clinic's real today), so a
+freshly seeded demo always has valid, expired and not-yet-valid referrals and
+slots in the future. Tests pass a fixed `today`, so their data never changes.
+The data does NOT follow the calendar after seeding: re-run with --reset
+when a long-lived dev database has gone stale.
 """
 
-from datetime import date, datetime, timedelta
+import argparse
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from app.config import CLINIC_TZ
-from app.db.models import Doctor, Patient, Referral, Slot, Specialty
+from app.config import CLINIC_TZ, clinic_date
+from app.db.models import Base, Doctor, Patient, Referral, Slot, Specialty
 from app.db.session import SessionLocal
 
 # (name, referral_required)
@@ -35,21 +42,32 @@ PATIENTS = [
     "Roni Biton", "Noga Hadad",
 ]
 
-# (patient_id, specialty_id, valid_from, valid_until): one of each situation,
-# so every referral rule has demo data to exercise.
+# (patient_id, specialty_id, valid_from, valid_until) - the dates are DAY OFFSETS
+# from "today" (negative = in the past). One of each situation, so every
+# referral rule has demo data to exercise.
 REFERRALS = [
-    (1, 1, date(2026, 11, 1), date(2026, 12, 31)),   # valid: Ben, Cardiology
-    (2, 2, date(2026, 11, 1), date(2026, 12, 31)),   # valid: Maya, Dermatology
-    (3, 1, date(2026, 9, 1), date(2026, 10, 1)),     # expired: Omer, Cardiology
-    (4, 1, date(2027, 1, 1), date(2027, 2, 1)),      # not valid YET: Shir, Cardiology
+    (1, 1, -13, 47),   # valid: Ben, Cardiology
+    (2, 2, -13, 47),   # valid: Maya, Dermatology
+    (3, 1, -74, -44),  # expired: Omer, Cardiology
+    (4, 1, 48, 79),    # not valid YET: Shir, Cardiology
     # patients 5-10 have no referrals at all
 ]
 
 
-def seed(session: Session) -> bool:
-    """Insert the demo data. Returns False if it was already seeded."""
+def reset(session: Session) -> None:
+    """Empty EVERY table and restart the id counters. Destroys all data."""
+    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
+    session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+
+
+def seed(session: Session, today: date | None = None) -> bool:
+    """Insert the demo data. Returns False if it was already seeded.
+
+    `today` is the clinic-calendar day the offsets are measured from.
+    """
     if session.scalar(select(func.count()).select_from(Specialty)):
         return False
+    today = today or clinic_date(datetime.now(CLINIC_TZ))
 
     # Explicit ids keep the demo identical to Stage 1 (slot 1, patient 1, ...).
     session.add_all(
@@ -64,13 +82,23 @@ def seed(session: Session) -> bool:
     session.add_all(Patient(id=i, name=n) for i, n in enumerate(PATIENTS, start=1))
     session.flush()
     session.add_all(
-        Referral(id=i, patient_id=p, specialty_id=s, valid_from=f, valid_until=u)
+        Referral(
+            id=i,
+            patient_id=p,
+            specialty_id=s,
+            valid_from=today + timedelta(days=f),
+            valid_until=today + timedelta(days=u),
+        )
         for i, (p, s, f, u) in enumerate(REFERRALS, start=1)
     )
 
     # Each doctor: 3 half-hour slots (09:00, 09:30, 10:00) on each of two days,
+    # starting the next Monday after `today` (so slots are always in the future),
     # in the CLINIC's time zone (a naive datetime would be a bug: see config.py).
-    first_day = datetime(2026, 11, 16, 9, 0, tzinfo=CLINIC_TZ)  # a Monday
+    days_until_monday = (7 - today.weekday()) % 7 or 7  # Monday is weekday 0
+    first_day = datetime.combine(
+        today + timedelta(days=days_until_monday), time(9, 0), tzinfo=CLINIC_TZ
+    )
     slot_id = 1
     for doctor_id in range(1, len(DOCTORS) + 1):
         for day_offset in (0, 1):
@@ -102,7 +130,16 @@ def seed(session: Session) -> bool:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Seed the demo data.")
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="DELETE ALL DATA first, then seed (development databases only)",
+    )
+    args = parser.parse_args()
     # .begin() = open a session AND a transaction; commit on success, roll
-    # back on error. A half-seeded database can't happen.
+    # back on error. A half-seeded (or half-reset) database can't happen.
     with SessionLocal.begin() as session:
+        if args.reset:
+            reset(session)
         print("Seeded." if seed(session) else "Already seeded - nothing to do.")

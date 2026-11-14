@@ -28,8 +28,8 @@ from app.errors import (
     SameDayAppointmentError,
     SlotTakenError,
 )
+from app.repositories import ConstraintViolation, SqlRepository
 from app.schemas import Appointment, Referral, Slot, Specialty
-from app.sql_repository import ConstraintViolation, SqlRepository
 
 
 # When no referral is usable and the client did not name one, WHICH reason do
