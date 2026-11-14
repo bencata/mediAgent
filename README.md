@@ -18,6 +18,24 @@ uv run uvicorn app.main:app --reload
 
 Data lives in memory and resets on every restart.
 
+## Database migrations (Stage 2)
+
+The schema lives in PostgreSQL and is managed with [Alembic](https://alembic.sqlalchemy.org/).
+The API itself still uses in-memory data until the repository is ported to the database.
+
+```bash
+docker compose up -d --wait       # start PostgreSQL
+uv run alembic upgrade head       # create / update the schema
+uv run alembic downgrade base     # drop everything again
+uv run alembic check              # fail if models and migrations have drifted apart
+```
+
+After changing `app/db/models.py`, generate a migration with
+`uv run alembic revision --autogenerate -m "describe the change"` and **read it before
+committing**: autogenerate cannot detect extensions (e.g. `btree_gist`) or enum cleanup.
+
+The database URL comes from `DATABASE_URL` and defaults to the local Docker Compose database.
+
 ## Endpoints
 
 | Method | Path | Description | Auth header |
