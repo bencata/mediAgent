@@ -5,23 +5,26 @@ and FastAPI calls get_service() for each request, passing the result in.
 In tests we can swap any of these (app.dependency_overrides).
 """
 
-from functools import lru_cache
-
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy.orm import Session
 
-from app.repositories import InMemoryRepository, build_seeded_repository
+from app.db.session import get_session
 from app.services import AppointmentService
+from app.sql_repository import SqlRepository
 
 
-@lru_cache
-def get_repository() -> InMemoryRepository:
-    # lru_cache makes this a singleton: ONE repository for the whole process.
-    # Without it every request would get fresh data and bookings would vanish.
-    return build_seeded_repository()
+def get_repository(
+    # scope="function": commit/rollback runs right after the endpoint returns,
+    # BEFORE the response is sent (see the TRAP in app/db/session.py).
+    session: Session = Depends(get_session, scope="function"),
+) -> SqlRepository:
+    # A NEW repository per request, around that request's own session
+    # (the old in-memory version had to be one shared singleton).
+    return SqlRepository(session)
 
 
 def get_service(
-    repo: InMemoryRepository = Depends(get_repository),
+    repo: SqlRepository = Depends(get_repository),
 ) -> AppointmentService:
     return AppointmentService(repo)
 

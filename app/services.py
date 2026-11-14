@@ -11,12 +11,12 @@ and raises domain errors when a rule is broken.
 """
 
 from app.errors import ConflictError, NotFoundError
-from app.repositories import InMemoryRepository
 from app.schemas import Appointment, Slot, Specialty
+from app.sql_repository import ConstraintViolation, SqlRepository
 
 
 class AppointmentService:
-    def __init__(self, repository: InMemoryRepository) -> None:
+    def __init__(self, repository: SqlRepository) -> None:
         # The repository is passed IN rather than created here
         # ("dependency injection"), so tests can hand in a fresh one.
         self._repo = repository
@@ -48,9 +48,25 @@ class AppointmentService:
         if not slot.is_available:
             raise ConflictError(f"Slot {slot_id} is already booked")  # 409
 
-        # NOTE: "check, then act". Between the line above and the save below,
-        # another request could book the same slot. We fix that in Stages 2-3.
-        return self._repo.save_appointment(slot, patient_id)
+        # The check above gives a friendly message in the common case, but it is
+        # still "check, then act": another request can book the slot between the
+        # check and the save. The DATABASE is the real guard - it refuses the
+        # second INSERT atomically - and we translate its refusal here.
+        try:
+            return self._repo.save_appointment(slot, patient_id)
+        except ConstraintViolation as violation:
+            raise self._to_conflict(violation, slot_id) from violation
+
+    @staticmethod
+    def _to_conflict(violation: ConstraintViolation, slot_id: int) -> Exception:
+        """Which constraint fired? That tells us which business rule was broken."""
+        if violation.constraint == "uq_appointments_active_slot":
+            return ConflictError(f"Slot {slot_id} is already booked")
+        if violation.constraint == "uq_appointments_active_patient_specialty_day":
+            return ConflictError(
+                "You already have an appointment for this specialty on that day"
+            )
+        return violation  # unknown constraint: a bug, let it be a 500
 
     def _require_patient(self, patient_id: int) -> None:
         if self._repo.get_patient(patient_id) is None:
