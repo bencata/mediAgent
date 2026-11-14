@@ -42,7 +42,56 @@ class SqlRepository:
 
     def list_specialties(self) -> list[schemas.Specialty]:
         rows = self._session.scalars(select(m.Specialty).order_by(m.Specialty.id))
-        return [schemas.Specialty(id=r.id, name=r.name) for r in rows]
+        return [_to_specialty(r) for r in rows]
+
+    def get_specialty_for_slot(self, slot_id: int) -> schemas.Specialty | None:
+        """The specialty of the slot's doctor (slot -> doctor -> specialty)."""
+        row = self._session.scalars(
+            select(m.Specialty)
+            .join(m.Doctor, m.Doctor.specialty_id == m.Specialty.id)
+            .join(m.Slot, m.Slot.doctor_id == m.Doctor.id)
+            .where(m.Slot.id == slot_id)
+        ).first()
+        return _to_specialty(row) if row else None
+
+    def get_referral_of_patient(
+        self, referral_id: int, patient_id: int
+    ) -> schemas.Referral | None:
+        """The referral, but ONLY if it belongs to this patient.
+
+        Ownership is part of the query, so someone else's referral is never
+        even fetched - and "missing" and "not yours" look the same: None.
+        """
+        row = self._session.scalars(
+            select(m.Referral).where(
+                m.Referral.id == referral_id, m.Referral.patient_id == patient_id
+            )
+        ).first()
+        return _to_referral(row) if row else None
+
+    def list_referrals_of_patient(
+        self, patient_id: int, specialty_id: int
+    ) -> list[schemas.Referral]:
+        rows = self._session.scalars(
+            select(m.Referral)
+            .where(
+                m.Referral.patient_id == patient_id,
+                m.Referral.specialty_id == specialty_id,
+            )
+            .order_by(m.Referral.valid_until, m.Referral.id)
+        )
+        return [_to_referral(r) for r in rows]
+
+    def is_referral_used(self, referral_id: int) -> bool:
+        """True if an ACTIVE appointment consumed this referral."""
+        return self._session.scalar(
+            select(
+                exists().where(
+                    m.Appointment.referral_id == referral_id,
+                    m.Appointment.status == m.AppointmentStatus.ACTIVE,
+                )
+            )
+        )
 
     def get_patient(self, patient_id: int) -> schemas.Patient | None:
         row = self._session.get(m.Patient, patient_id)  # None if missing
@@ -86,7 +135,7 @@ class SqlRepository:
     # ---- writes ------------------------------------------------------
 
     def save_appointment(
-        self, slot: schemas.Slot, patient_id: int
+        self, slot: schemas.Slot, patient_id: int, referral_id: int | None = None
     ) -> schemas.Appointment:
         """Insert the booking. Raises ConstraintViolation if the DB refuses it.
 
@@ -97,6 +146,7 @@ class SqlRepository:
         row = m.Appointment(
             slot_id=slot.id,
             patient_id=patient_id,
+            referral_id=referral_id,
             # Snapshot columns (see models.py): copied once, at booking time.
             specialty_id=doctor.specialty_id,
             # The slot's date on the CLINIC's calendar, not UTC's.
@@ -107,9 +157,12 @@ class SqlRepository:
             # step is undone and the request's transaction stays usable.
             with self._session.begin_nested():
                 self._session.add(row)
-                # flush() sends the INSERT to the database NOW. Without it the
-                # INSERT would wait until commit, after the service has already
-                # returned, and the service could never catch the violation.
+                # The point: the INSERT must reach the database NOW, inside this
+                # call. Otherwise it would wait until commit, after the service
+                # has already returned, and the service could never catch the
+                # violation. (Leaving the `with` block flushes too, so this
+                # explicit call is redundant - kept so the intent is visible.
+                # Removing the whole savepoint block IS caught by the tests.)
                 self._session.flush()
         except IntegrityError as error:
             raise ConstraintViolation(_constraint_name(error)) from error
@@ -134,6 +187,22 @@ def _is_taken():
 def _constraint_name(error: IntegrityError) -> str | None:
     # psycopg exposes PostgreSQL's error fields under .diag
     return getattr(getattr(error.orig, "diag", None), "constraint_name", None)
+
+
+def _to_specialty(row: m.Specialty) -> schemas.Specialty:
+    return schemas.Specialty(
+        id=row.id, name=row.name, referral_required=row.referral_required
+    )
+
+
+def _to_referral(row: m.Referral) -> schemas.Referral:
+    return schemas.Referral(
+        id=row.id,
+        patient_id=row.patient_id,
+        specialty_id=row.specialty_id,
+        valid_from=row.valid_from,
+        valid_until=row.valid_until,
+    )
 
 
 def _to_slot(row: m.Slot, taken: bool) -> schemas.Slot:

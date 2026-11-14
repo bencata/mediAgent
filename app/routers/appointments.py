@@ -29,4 +29,4 @@ def book_appointment(
     patient_id: int = Depends(get_current_patient_id),  # from the server, NOT the body
     service: AppointmentService = Depends(get_service),
 ):
-    return service.book_appointment(patient_id, body.slot_id)
+    return service.book_appointment(patient_id, body.slot_id, body.referral_id)
