@@ -35,6 +35,18 @@ class ConflictError(DomainError):
     """It exists, but its current state forbids this action -> HTTP 409."""
 
 
+class SlotTakenError(ConflictError):
+    """An active appointment already holds this slot."""
+
+    code = "slot_taken"
+
+
+class SameDayAppointmentError(ConflictError):
+    """The patient already has an active appointment for this specialty that day."""
+
+    code = "same_day_appointment"
+
+
 # ---- referral reasons: all 409, told apart by `code` -------------------
 
 

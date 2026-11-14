@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import CLINIC_TZ
 from app.db import models as m
-from app.errors import ConflictError, ReferralUsedError
+from app.errors import ReferralUsedError, SameDayAppointmentError, SlotTakenError
 from app.services import AppointmentService
 from tests.helpers import (
     BEN,
@@ -23,7 +23,6 @@ from tests.helpers import (
     NOW,
     ORTHO_SLOT_DAY1,
     ORTHO_SLOT_DAY1_LATER,
-    ORTHO_SLOT_DAY2,
     YAEL,
 )
 
@@ -44,9 +43,9 @@ def test_database_refuses_a_double_booking_when_the_service_check_is_fooled(
         "get_slot",
         lambda slot_id: real_get_slot(slot_id).model_copy(update={"is_available": True}),
     )
-    with pytest.raises(ConflictError) as error:
+    with pytest.raises(SlotTakenError) as error:
         service.book_appointment(YAEL, ORTHO_SLOT_DAY1)
-    assert "already booked" in error.value.message
+    assert error.value.code == "slot_taken"
     # The failed attempt left nothing behind, and the session is still usable.
     assert repo.list_appointments_for_patient(YAEL) == []
 
@@ -64,14 +63,17 @@ def test_database_refuses_a_second_use_of_a_referral_when_the_service_check_is_f
     assert "just used" in error.value.message  # produced by the DB path, not the pre-check
 
 
-def test_one_active_appointment_per_patient_specialty_and_day(repo, make_service):
+def test_database_refuses_a_second_same_day_appointment_when_the_service_check_is_fooled(
+    repo, make_service, monkeypatch
+):
     service = make_service()
     service.book_appointment(NOGA, ORTHO_SLOT_DAY1)
-    with pytest.raises(ConflictError) as error:  # same specialty, same clinic day
+
+    monkeypatch.setattr(repo, "has_active_appointment_on_day", lambda *args: False)  # fooled
+    with pytest.raises(SameDayAppointmentError) as error:
         service.book_appointment(NOGA, ORTHO_SLOT_DAY1_LATER)
-    assert "that day" in error.value.message
-    service.book_appointment(NOGA, ORTHO_SLOT_DAY2)  # the next day is fine
-    assert len(repo.list_appointments_for_patient(NOGA)) == 2
+    assert error.value.code == "same_day_appointment"
+    assert "that day" in error.value.message  # the DB-path wording, not the pre-check's
 
 
 def test_cancelling_frees_the_day_and_the_slot(session, repo, make_service):

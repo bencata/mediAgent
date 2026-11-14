@@ -13,9 +13,8 @@ and raises domain errors when a rule is broken.
 from collections.abc import Callable
 from datetime import date, datetime
 
-from app.config import CLINIC_TZ
+from app.config import CLINIC_TZ, clinic_date
 from app.errors import (
-    ConflictError,
     ForbiddenError,
     NotFoundError,
     ReferralAmbiguousError,
@@ -26,6 +25,8 @@ from app.errors import (
     ReferralNotYetValidError,
     ReferralUsedError,
     ReferralWrongSpecialtyError,
+    SameDayAppointmentError,
+    SlotTakenError,
 )
 from app.schemas import Appointment, Referral, Slot, Specialty
 from app.sql_repository import ConstraintViolation, SqlRepository
@@ -65,7 +66,7 @@ class AppointmentService:
         Not `date.today()`: that uses the SERVER's time zone (the NY/LA bug).
         astimezone() also makes this correct if a test's clock is in another zone.
         """
-        return self._now().astimezone(CLINIC_TZ).date()
+        return clinic_date(self._now())
 
     def list_specialties(self) -> list[Specialty]:
         return self._repo.list_specialties()
@@ -92,11 +93,21 @@ class AppointmentService:
         if slot is None:
             raise NotFoundError(f"Slot {slot_id} does not exist")  # 404
 
-        # --- the rule ---
         if not slot.is_available:
-            raise ConflictError(f"Slot {slot_id} is already booked")  # 409
+            raise SlotTakenError(f"Slot {slot_id} is already booked")  # 409
 
         specialty = self._repo.get_specialty_for_slot(slot_id)  # exists: FK
+
+        # One active appointment per patient, specialty and clinic day. This
+        # comes BEFORE the referral rule on purpose: if the patient's only
+        # referral was consumed by the earlier same-day appointment, the useful
+        # message is "you already have one that day", not "referral used".
+        day = clinic_date(slot.start_time)
+        if self._repo.has_active_appointment_on_day(patient_id, specialty.id, day):
+            raise SameDayAppointmentError(
+                f"You already have a {specialty.name} appointment on {day}"
+            )
+
         referral_id_to_use = self._resolve_referral(patient_id, specialty, referral_id)
 
         # The check above gives a friendly message in the common case, but it is
@@ -198,9 +209,9 @@ class AppointmentService:
     def _to_conflict(violation: ConstraintViolation, slot_id: int) -> Exception:
         """Which constraint fired? That tells us which business rule was broken."""
         if violation.constraint == "uq_appointments_active_slot":
-            return ConflictError(f"Slot {slot_id} is already booked")
+            return SlotTakenError(f"Slot {slot_id} is already booked")
         if violation.constraint == "uq_appointments_active_patient_specialty_day":
-            return ConflictError(
+            return SameDayAppointmentError(
                 "You already have an appointment for this specialty on that day"
             )
         if violation.constraint == "uq_appointments_active_referral":

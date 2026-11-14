@@ -1,6 +1,7 @@
 """Settings shared by the app and by Alembic (one source of truth)."""
 
 import os
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 # Defaults match docker-compose.yml: local development credentials only.
@@ -16,3 +17,13 @@ DATABASE_URL = os.environ.get(
 # not the patient's. Always an IANA name via zoneinfo, never a fixed "+02:00"
 # offset: the real offset changes with daylight saving time.
 CLINIC_TZ = ZoneInfo("Asia/Jerusalem")
+
+
+def clinic_date(moment: datetime) -> date:
+    """The calendar day `moment` falls on, on the CLINIC's calendar.
+
+    The single place that answers "which day is this?". Used for today's date
+    (referral validity) and for a slot's date (one booking per specialty per
+    day), so the two can never disagree. `moment` must be time-zone aware.
+    """
+    return moment.astimezone(CLINIC_TZ).date()

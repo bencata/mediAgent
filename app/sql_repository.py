@@ -10,12 +10,14 @@ The one thing it MUST do is translate low-level database errors into a
 storage-level error the service can understand (see ConstraintViolation).
 """
 
+from datetime import date
+
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import schemas
-from app.config import CLINIC_TZ
+from app.config import CLINIC_TZ, clinic_date
 from app.db import models as m
 
 
@@ -132,6 +134,22 @@ class SqlRepository:
         )
         return [_to_appointment(appt, doctor_id) for appt, doctor_id in rows]
 
+    def has_active_appointment_on_day(
+        self, patient_id: int, specialty_id: int, day: date
+    ) -> bool:
+        """True if the patient has an ACTIVE appointment for this specialty on `day`
+        (a clinic calendar day, same meaning as the appointment_date column)."""
+        return self._session.scalar(
+            select(
+                exists().where(
+                    m.Appointment.patient_id == patient_id,
+                    m.Appointment.specialty_id == specialty_id,
+                    m.Appointment.appointment_date == day,
+                    m.Appointment.status == m.AppointmentStatus.ACTIVE,
+                )
+            )
+        )
+
     # ---- writes ------------------------------------------------------
 
     def save_appointment(
@@ -150,7 +168,7 @@ class SqlRepository:
             # Snapshot columns (see models.py): copied once, at booking time.
             specialty_id=doctor.specialty_id,
             # The slot's date on the CLINIC's calendar, not UTC's.
-            appointment_date=slot.start_time.astimezone(CLINIC_TZ).date(),
+            appointment_date=clinic_date(slot.start_time),
         )
         try:
             # begin_nested() = a SAVEPOINT: if the INSERT fails, only this tiny

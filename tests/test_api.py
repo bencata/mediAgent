@@ -22,6 +22,7 @@ from tests.helpers import (
     NOGA,
     NOW,
     ORTHO_SLOT_DAY1,
+    ORTHO_SLOT_DAY1_LATER,
 )
 
 
@@ -69,11 +70,18 @@ def test_someone_elses_referral_is_403(client):
     assert response.status_code == 403
 
 
-def test_a_taken_slot_is_409_without_a_referral_code(client):
+def test_a_taken_slot_is_409_with_its_own_code(client):
     assert book(client, NOGA, ORTHO_SLOT_DAY1).status_code == 201
     response = book(client, MAYA, ORTHO_SLOT_DAY1)
     assert response.status_code == 409
-    assert "code" not in response.json()
+    assert response.json()["code"] == "slot_taken"
+
+
+def test_a_second_booking_for_the_same_specialty_and_day_is_409(client):
+    assert book(client, NOGA, ORTHO_SLOT_DAY1).status_code == 201
+    response = book(client, NOGA, ORTHO_SLOT_DAY1_LATER)
+    assert response.status_code == 409
+    assert response.json()["code"] == "same_day_appointment"
 
 
 @pytest.mark.parametrize("bad_id", [0, -3, "abc"])

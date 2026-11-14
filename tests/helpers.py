@@ -4,7 +4,7 @@ The ids below come from the demo seed (app/db/seed.py). Keeping them named
 here means a test reads "CARDIO_SLOT_DAY1", not a mysterious "1".
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -52,3 +52,13 @@ def add_referral(
     session.add(referral)
     session.flush()  # sends the INSERT now, so the id is assigned
     return referral.id
+
+
+def add_slot(session: Session, doctor_id: int, start: datetime, minutes: int = 30) -> int:
+    """Insert one extra slot for a scenario; returns its id."""
+    slot = m.Slot(
+        doctor_id=doctor_id, start_time=start, end_time=start + timedelta(minutes=minutes)
+    )
+    session.add(slot)
+    session.flush()
+    return slot.id

@@ -12,7 +12,6 @@ from sqlalchemy import select, update
 
 from app.db import models as m
 from app.errors import (
-    ConflictError,
     ForbiddenError,
     ReferralAmbiguousError,
     ReferralExpiredError,
@@ -21,6 +20,7 @@ from app.errors import (
     ReferralNotYetValidError,
     ReferralUsedError,
     ReferralWrongSpecialtyError,
+    SlotTakenError,
 )
 from tests.helpers import (
     BEN,
@@ -252,8 +252,7 @@ def test_among_expired_referrals_the_most_recent_is_reported(session, make_servi
 def test_a_taken_slot_is_reported_before_referral_problems(make_service):
     service = make_service()
     service.book_appointment(BEN, CARDIO_SLOT_DAY1, referral_id=1)
-    with pytest.raises(ConflictError) as error:
+    with pytest.raises(SlotTakenError) as error:
         # Omer's referral is expired too, but the slot problem is reported first.
         service.book_appointment(OMER, CARDIO_SLOT_DAY1)
-    assert type(error.value) is ConflictError  # a plain conflict, not a ReferralError
-    assert "already booked" in error.value.message
+    assert error.value.code == "slot_taken"
