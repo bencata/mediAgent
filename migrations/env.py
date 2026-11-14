@@ -1,25 +1,20 @@
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
+from app.config import DATABASE_URL
 from app.db.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-# The database URL comes from the environment, with the local Docker Compose
-# database as the default. "+psycopg" selects the psycopg 3 driver.
-# (No real credentials here: these match docker-compose.yml, dev only.)
+# Same URL the app uses (app/config.py), so they can never drift apart.
 config.set_main_option(
     "sqlalchemy.url",
-    os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://mediagent:mediagent@localhost:5432/mediagent",
-    ).replace("%", "%%"),  # the ini parser treats % specially
+    DATABASE_URL.replace("%", "%%"),  # the ini parser treats % specially
 )
 
 # Interpret the config file for Python logging.
